@@ -2,6 +2,10 @@
 
 A Plasma 6 panel widget that shows your Claude plan usage at a glance: the current 5-hour session and the weekly limit.
 
+![Claude Usage popup: session and weekly usage bars with reset countdowns](screenshots/popup.png)
+
+In the panel: ![Panel widget with session and weekly bars](screenshots/panel.png)
+
 - **Panel:** two thin bars with percentages (session on top, weekly below). Each bar is colored by level: normal, from 70% amber, from 90% red.
 - **Tooltip:** usage and time until reset for both windows.
 - **Popup:** one card for each limit, plus any model-specific weekly limit your plan has. Each card shows:

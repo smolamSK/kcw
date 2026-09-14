@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "siroSK"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Claude plan usage: current 5-hour session and weekly limit, with time until each resets",
+        "Icon": "speedometer",
+        "Id": "org.smolam.claudeusage",
+        "License": "MIT",
+        "Name": "Claude Usage",
+        "Version": "1.0",
+        "Website": "https://github.com/smolamSK/kcw"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

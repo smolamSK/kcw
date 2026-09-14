@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Print Claude plan usage (5-hour session, weekly limits) as JSON for the
+org.smolam.claudeusage panel widget.
+
+Uses the Claude Code OAuth token from ~/.claude/.credentials.json read-only:
+it never refreshes the token. When the token has expired or the request fails,
+the last good result is printed with "stale": true and an "error" message.
+
+Usage: claude-usage [--force]   (--force skips the 60 s cache throttle)
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+CREDENTIALS = Path(os.environ.get("CLAUDE_USAGE_CREDENTIALS", Path.home() / ".claude/.credentials.json"))
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "claude-usage/last.json"
+URL = "https://api.anthropic.com/api/oauth/usage"
+THROTTLE = 60  # seconds
+
+
+def load_cache():
+    try:
+        return json.loads(CACHE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cache(data):
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=CACHE.parent, prefix=".last.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, CACHE)
+
+
+def window(raw):
+    if not raw:
+        return None
+    # Epoch seconds: QML's Date can't parse the API's microsecond ISO timestamps.
+    resets = raw.get("resets_at")
+    return {
+        "percent": round(raw.get("utilization") or 0),
+        "resets_at": int(datetime.fromisoformat(resets).timestamp()) if resets else None,
+    }
+
+
+def normalize(raw, plan):
+    models = []
+    for key, label in (("seven_day_opus", "Weekly · Opus"), ("seven_day_sonnet", "Weekly · Sonnet")):
+        if raw.get(key):
+            models.append({"label": label, **window(raw[key])})
+
+    extra = raw.get("extra_usage") or {}
+    scale = 10 ** (extra.get("decimal_places") or 0)
+    return {
+        "plan": plan,
+        "fetched_at": int(time.time()),
+        "stale": False,
+        "error": "",
+        "session": window(raw.get("five_hour")),
+        "weekly": window(raw.get("seven_day")),
+        "models": models,
+        "extra": {
+            "enabled": bool(extra.get("is_enabled")),
+            "used": (extra.get("used_credits") or 0) / scale,
+            "limit": (extra.get("monthly_limit") or 0) / scale,
+            "currency": extra.get("currency") or "",
+        },
+    }
+
+
+def fetch():
+    try:
+        oauth = json.loads(CREDENTIALS.read_text())["claudeAiOauth"]
+        token = oauth["accessToken"]
+    except (OSError, ValueError, KeyError):
+        raise RuntimeError("Not signed in to Claude Code")
+    if oauth.get("expiresAt", 0) / 1000 < time.time():
+        raise RuntimeError("Sign-in expired — use Claude Code to refresh")
+
+    req = urllib.request.Request(URL, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+        "Content-Type": "application/json",
+        "User-Agent": "claude-usage-plasmoid",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = json.load(resp)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise RuntimeError("Sign-in expired — use Claude Code to refresh")
+        if e.code == 429:
+            raise RuntimeError("Rate limited — will retry later")
+        raise RuntimeError(f"Usage request failed (HTTP {e.code})")
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        raise RuntimeError("Can't reach Anthropic — offline?")
+    return normalize(raw, oauth.get("subscriptionType") or "")
+
+
+def main():
+    force = "--force" in sys.argv[1:]
+    cached = load_cache()
+    if not force and cached and time.time() - cached.get("fetched_at", 0) < THROTTLE:
+        print(json.dumps(cached))
+        return
+
+    try:
+        data = fetch()
+        save_cache(data)
+    except RuntimeError as e:
+        data = {**cached, "stale": True, "error": str(e)}
+    print(json.dumps(data))
+
+
+if __name__ == "__main__":
+    main()
